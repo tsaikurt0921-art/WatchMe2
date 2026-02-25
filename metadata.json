@@ -1,0 +1,7 @@
+{
+  "name": "Watchme - 互動式多媒體播放系統",
+  "description": "一個專業的互動式多媒體播放與版面管理系統，支援 YouTube、網頁嵌入、即時天氣及圖片輪播。",
+  "requestFramePermissions": [
+    "fullscreen"
+  ]
+}
