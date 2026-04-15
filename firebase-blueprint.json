@@ -1,0 +1,133 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Stores user subscription and role information",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["user", "admin", "co-admin"] },
+        "trialExpiry": { "type": "string", "format": "date-time" },
+        "subscriptionExpiry": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "customTemplates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "type": { "type": "string", "enum": ["landscape", "portrait"] },
+              "zones": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "integer" },
+                    "type": { "type": "string" },
+                    "x": { "type": "number" },
+                    "y": { "type": "number" },
+                    "w": { "type": "number" },
+                    "h": { "type": "number" }
+                  }
+                }
+              },
+              "createdAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      },
+      "required": ["email", "role", "trialExpiry", "subscriptionExpiry", "createdAt"]
+    },
+    "LicenseKey": {
+      "title": "License Key",
+      "description": "Stores generated license keys for subscription activation",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "description": "16-character alphanumeric key" },
+        "durationMonths": { "type": "integer", "enum": [1, 3, 6, 12] },
+        "isUsed": { "type": "boolean" },
+        "usedBy": { "type": "string", "description": "UID of the user who used the key" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["key", "durationMonths", "isUsed", "createdAt"]
+    },
+    "SharedDisplay": {
+      "title": "Shared Display",
+      "description": "A snapshot of a layout and its content for public viewing",
+      "type": "object",
+      "properties": {
+        "layout": { "type": "string" },
+        "customZones": { "type": "array" },
+        "zonesData": { "type": "object" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["layout", "zonesData", "ownerId", "createdAt"]
+    },
+    "SavedTemplate": {
+      "title": "Saved Template",
+      "description": "User's saved template configuration based on system templates",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "baseTemplateId": { "type": "string" },
+        "zonesConfig": { "type": "object" },
+        "type": { "type": "string", "enum": ["landscape", "portrait"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "baseTemplateId", "zonesConfig", "type", "createdAt"]
+    },
+    "PricingPlan": {
+      "title": "Pricing Plan",
+      "description": "Subscription plans available for purchase",
+      "type": "object",
+      "properties": {
+        "durationMonths": { "type": "integer" },
+        "originalPrice": { "type": "number" },
+        "discountPrice": { "type": "number" },
+        "discountPercentage": { "type": "integer" },
+        "discountExpiry": { "type": "string", "format": "date-time" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["durationMonths", "originalPrice", "isActive"]
+    },
+    "AppSettings": {
+      "title": "App Settings",
+      "description": "Global application settings including email templates",
+      "type": "object",
+      "properties": {
+        "emailSender": { "type": "string" },
+        "emailSubject": { "type": "string" },
+        "emailTemplate": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User subscription and role data"
+    },
+    "/licenseKeys/{keyId}": {
+      "schema": "LicenseKey",
+      "description": "Generated license keys"
+    },
+    "/sharedDisplays/{displayId}": {
+      "schema": "SharedDisplay",
+      "description": "Publicly accessible display snapshots"
+    },
+    "/savedTemplates/{templateId}": {
+      "schema": "SavedTemplate",
+      "description": "User's saved template configurations"
+    },
+    "/pricingPlans/{planId}": {
+      "schema": "PricingPlan",
+      "description": "Available subscription plans"
+    },
+    "/settings/global": {
+      "schema": "AppSettings",
+      "description": "Global app settings"
+    }
+  }
+}

@@ -6,6 +6,42 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+@layer base {
+  body {
+    @apply bg-white text-slate-900 antialiased;
+  }
+}
+
+.glass-panel {
+  @apply bg-white/80 backdrop-blur-md border border-slate-200 shadow-sm;
+}
+
+.card-hover {
+  @apply transition-all duration-300 hover:-translate-y-1 hover:shadow-lg;
+}
+
+.btn-primary {
+  @apply bg-blue-600 text-white hover:bg-blue-500 transition-all active:scale-95 disabled:opacity-50;
+}
+
+.btn-secondary {
+  @apply bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all active:scale-95;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-50;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded-full hover:bg-slate-400 transition-colors;
+}
+
 @layer utilities {
   .animate-pulse-slow {
     animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;

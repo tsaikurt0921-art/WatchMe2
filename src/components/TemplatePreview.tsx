@@ -1,16 +1,37 @@
 import React from 'react';
 
-const Block = ({ className = "", color = "bg-slate-700/50", label = "", ...props }: any) => (
-  <div {...props} className={`w-full h-full rounded-[1px] border border-slate-600/30 ${color} ${className} flex items-center justify-center`}>
-     {label && <span className="text-[8px] text-white/30">{label}</span>}
+const Block = ({ className = "", color = "bg-slate-100", label = "", ...props }: any) => (
+  <div {...props} className={`w-full h-full rounded-[1px] border border-slate-200 ${color} ${className} flex items-center justify-center`}>
+     {label && <span className="text-[8px] text-slate-400 font-bold">{label}</span>}
   </div>
 );
 
-export const TemplatePreview = ({ layout, type }: { layout: string, type: string }) => {
+export const TemplatePreview = ({ layout, type, customZones }: { layout: string, type: string, customZones?: any[] | null }) => {
   const isLandscape = type === 'landscape';
   const containerClass = isLandscape ? 'w-full aspect-video' : 'h-full aspect-[9/16] mx-auto';
 
   const renderLayout = () => {
+    if (layout === 'custom' && customZones) {
+      return (
+        <div className="w-full h-full relative bg-white">
+          {customZones.map((zone: any) => (
+            <div 
+              key={zone.id} 
+              style={{
+                position: 'absolute',
+                left: `${zone.x}%`,
+                top: `${zone.y}%`,
+                width: `${zone.w}%`,
+                height: `${zone.h}%`
+              }}
+              className="border border-slate-200 bg-slate-50 flex items-center justify-center"
+            >
+              <span className="text-[6px] text-slate-300 font-bold uppercase">{zone.type}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
     switch (layout) {
       // Landscape
       case 'L_FULL_16_9': return <Block color="bg-blue-500/20" label="16:9" />;
@@ -23,6 +44,7 @@ export const TemplatePreview = ({ layout, type }: { layout: string, type: string
       case 'L_LEFT_COL_MAIN_RIGHT': return <div className="flex h-full"><div className="w-[25%] flex flex-col"><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div><div className="h-1/4"><Block label="16:9"/></div></div><div className="w-[75%]"><Block color="bg-purple-500/20" label="4:3" /></div></div>;
       case 'L_3_PORTRAIT': return <div className="flex h-full justify-center gap-1 bg-black/20"><div className="h-full aspect-[9/16]"><Block label="9:16"/></div><div className="h-full aspect-[9/16]"><Block label="9:16"/></div><div className="h-full aspect-[9/16]"><Block label="9:16"/></div></div>;
       case 'L_SPLIT_AND_BANNERS': return <div className="flex flex-col h-full"><div className="h-[50%] flex"><div className="w-1/2"><Block label="16:9"/></div><div className="w-1/2"><Block label="16:9"/></div></div><div className="h-[25%]"><Block color="bg-yellow-500/20" label="Banner" /></div><div className="h-[25%]"><Block color="bg-yellow-500/20" label="Banner" /></div></div>;
+      case 'L_TOP_BANNER_LR_SPLIT': return <div className="flex flex-col h-full"><div className="h-[25%]"><Block color="bg-yellow-500/20" label="Banner" /></div><div className="h-[75%] flex"><div className="w-[75%]"><Block label="16:9" /></div><div className="w-[25%]"><Block label="6:19" /></div></div></div>;
 
       // Portrait
       case 'P_FULL_9_16': return <Block color="bg-blue-500/20" label="9:16" />;
@@ -40,7 +62,7 @@ export const TemplatePreview = ({ layout, type }: { layout: string, type: string
   };
 
   return (
-    <div className={`${containerClass} bg-slate-900 border border-slate-700 p-1 shadow-inner flex items-center justify-center`}>
+    <div className={`${containerClass} bg-slate-50 border border-slate-200 p-1 shadow-inner flex items-center justify-center rounded-lg overflow-hidden`}>
       <div className="w-full h-full">{renderLayout()}</div>
     </div>
   );

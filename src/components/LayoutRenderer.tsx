@@ -2,30 +2,52 @@ import React from 'react';
 import { Settings, Plus } from 'lucide-react';
 import { ZoneContentRenderer } from './ZoneContentRenderer';
 
-export const LayoutRenderer = ({ layout, zonesData, onZoneClick, isPlaying }: any) => {
-  const Zone = ({ index, className = "", label = "" }: any) => {
+export const LayoutRenderer = ({ layout, zonesData, onZoneClick, isPlaying, customZones }: any) => {
+  const Zone = ({ index, className = "", label = "", style = {} }: any) => {
     const hasContent = !!zonesData[index];
     return (
       <div 
         onClick={() => !isPlaying && onZoneClick(index)} 
+        style={style}
         className={`relative overflow-hidden group transition-all duration-300 ${
-          isPlaying ? 'border-0' : `cursor-pointer border ${hasContent ? 'border-transparent hover:border-blue-400' : 'border-slate-700 bg-slate-800/50 hover:bg-slate-800 hover:border-blue-500'}`
+          isPlaying ? 'border-0' : `cursor-pointer border ${hasContent ? 'border-transparent hover:border-blue-400' : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-blue-500'}`
         } ${className}`}
       >
         {hasContent ? <ZoneContentRenderer content={zonesData[index]} isPlaying={isPlaying} /> : !isPlaying && (
-            <div className="flex h-full w-full flex-col items-center justify-center text-slate-500 transition-colors group-hover:text-blue-400">
+            <div className="flex h-full w-full flex-col items-center justify-center text-slate-400 transition-colors group-hover:text-blue-600">
               <Plus size={24} className="mb-1" />
-              <span className="text-xs font-medium text-center px-2">Zone {index + 1}<br/><span className="opacity-50 text-[10px]">{label}</span></span>
+              <span className="text-xs font-bold text-center px-2 uppercase tracking-widest opacity-80">Zone {index + 1}<br/><span className="opacity-50 text-[10px]">{label}</span></span>
             </div>
         )}
         {!isPlaying && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 pointer-events-none z-20">
-            <div className="rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-lg flex items-center gap-2"><Settings size={16} />{hasContent ? '編輯' : '新增'}</div>
+          <div className="absolute inset-0 flex items-center justify-center bg-white/80 opacity-0 transition-opacity group-hover:opacity-100 pointer-events-none z-20">
+            <div className="rounded-2xl bg-blue-600 px-6 py-3 text-sm font-black text-white shadow-2xl flex items-center gap-2 scale-90 group-hover:scale-100 transition-transform"><Settings size={18} />{hasContent ? '編輯內容' : '新增內容'}</div>
           </div>
         )}
       </div>
     );
   };
+
+  if (layout === 'custom' && customZones) {
+    return (
+      <div className="w-full h-full relative bg-black">
+        {customZones.map((zone: any) => (
+          <Zone 
+            key={zone.id} 
+            index={zone.id} 
+            label={zone.blockName || zone.type}
+            style={{
+              position: 'absolute',
+              left: `${zone.x}%`,
+              top: `${zone.y}%`,
+              width: `${zone.w}%`,
+              height: `${zone.h}%`
+            }}
+          />
+        ))}
+      </div>
+    );
+  }
 
   switch (layout) {
     case 'L_FULL_16_9': return <div className="w-full h-full"><Zone index={0} className="w-full h-full" label="16:9" /></div>;
@@ -38,6 +60,7 @@ export const LayoutRenderer = ({ layout, zonesData, onZoneClick, isPlaying }: an
     case 'L_LEFT_COL_MAIN_RIGHT': return <div className="w-full h-full flex"><div className="w-[25%] flex flex-col"><Zone index={0} className="h-1/4" label="16:9" /><Zone index={1} className="h-1/4" label="16:9" /><Zone index={2} className="h-1/4" label="16:9" /><Zone index={3} className="h-1/4" label="16:9" /></div><div className="w-[75%]"><Zone index={4} className="w-full h-full" label="4:3 (1440x1080)" /></div></div>;
     case 'L_3_PORTRAIT': return <div className="w-full h-full flex items-center justify-center gap-1 bg-black"><div className="h-full aspect-[9/16]"><Zone index={0} className="w-full h-full" label="9:16" /></div><div className="h-full aspect-[9/16]"><Zone index={1} className="w-full h-full" label="9:16" /></div><div className="h-full aspect-[9/16]"><Zone index={2} className="w-full h-full" label="9:16" /></div></div>;
     case 'L_SPLIT_AND_BANNERS': return <div className="w-full h-full flex flex-col"><div className="h-[50%] flex"><div className="w-1/2"><Zone index={0} className="w-full h-full" label="16:9" /></div><div className="w-1/2"><Zone index={1} className="w-full h-full" label="16:9" /></div></div><div className="h-[25%]"><Zone index={2} className="w-full h-full" label="1920x270" /></div><div className="h-[25%]"><Zone index={3} className="w-full h-full" label="1920x270" /></div></div>;
+    case 'L_TOP_BANNER_LR_SPLIT': return <div className="w-full h-full flex flex-col"><div className="h-[25%]"><Zone index={0} className="w-full h-full" label="1920x270" /></div><div className="h-[75%] flex"><div className="w-[75%]"><Zone index={1} className="w-full h-full" label="16:9" /></div><div className="w-[25%]"><Zone index={2} className="w-full h-full" label="6:19" /></div></div></div>;
 
     case 'P_FULL_9_16': return <div className="w-full h-full"><Zone index={0} className="w-full h-full" label="9:16" /></div>;
     case 'P_GRID_4_9_16': return <div className="w-full h-full grid grid-cols-2 grid-rows-2"><Zone index={0} label="9:16" /><Zone index={1} label="9:16" /><Zone index={2} label="9:16" /><Zone index={3} label="9:16" /></div>;

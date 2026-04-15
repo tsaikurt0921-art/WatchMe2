@@ -29,6 +29,7 @@ export const TEMPLATES = [
   { id: 'L08', name: '左側輪播+右側主視', type: 'landscape', category: '企業', layout: 'L_LEFT_COL_MAIN_RIGHT', zoneCount: 5, desc: '4個 16:9 + 1個 4:3' },
   { id: 'L09', name: '橫向三直式流媒體', type: 'landscape', category: '社群', layout: 'L_3_PORTRAIT', zoneCount: 3, desc: '3個 9:16' },
   { id: 'L10', name: '雙主圖+雙跑馬燈', type: 'landscape', category: '零售', layout: 'L_SPLIT_AND_BANNERS', zoneCount: 4, desc: '2個 16:9 + 2個 Banner' },
+  { id: 'L11', name: '頂部橫幅+16:9主視+直式Banner', type: 'landscape', category: '複合', layout: 'L_TOP_BANNER_LR_SPLIT', zoneCount: 3, desc: 'Banner + 16:9 + 6:19' },
 
   // --- 直式版型 (1080x1920) ---
   { id: 'P01', name: '全螢幕直式 (9:16)', type: 'portrait', category: '單一媒體', layout: 'P_FULL_9_16', zoneCount: 1, desc: '1個 9:16 (滿版)' },

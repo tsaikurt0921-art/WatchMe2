@@ -110,7 +110,7 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
 
   switch (content.type) {
     case 'weather':
-      if (!weatherData || !weatherData.current) return <div className="w-full h-full flex items-center justify-center bg-slate-800 text-white"><Loader2 className="animate-spin text-blue-400" size={32}/><span className="ml-2 text-sm text-slate-400">載入氣象資訊...</span></div>;
+      if (!weatherData || !weatherData.current) return <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400"><Loader2 className="animate-spin text-blue-600" size={32}/><span className="ml-2 text-sm font-bold">載入氣象資訊...</span></div>;
       
       const { current, daily } = weatherData;
       const todayMax = daily.temperature_2m_max[0];
@@ -180,7 +180,13 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
       return (
         <div className="w-full h-full relative overflow-hidden bg-black">
           {content.images.map((img: string, idx: number) => (
-             <img key={idx} src={img} alt={`Slide ${idx}`} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${idx === currentSlide ? 'opacity-100' : 'opacity-0'}`} />
+             <img 
+               key={idx} 
+               src={img} 
+               alt={`Slide ${idx}`} 
+               referrerPolicy="no-referrer"
+               className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${idx === currentSlide ? 'opacity-100' : 'opacity-0'}`} 
+             />
           ))}
         </div>
       );
@@ -191,9 +197,9 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
       }
       
       const transformedUrl = transformWebUrl(safeUrl);
-      const isVideoFile = transformedUrl.match(/\.(mp4|webm|ogg|mov)$/i);
+      const isVideoFile = transformedUrl.match(/\.(mp4|webm|ogg|mov)(\?|$)/i) || transformedUrl.includes('firebasestorage.googleapis.com');
 
-      if (isVideoFile) {
+      if (isVideoFile && !transformedUrl.includes('youtube.com') && !transformedUrl.includes('youtu.be')) {
          return (
           <div className="w-full h-full bg-black relative flex items-center justify-center">
             <video 
@@ -210,7 +216,7 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
       const finalUrl = `/api/proxy?url=${encodeURIComponent(transformedUrl)}`;
 
       return (
-        <div ref={webContainerRef} className="w-full h-full bg-slate-900 relative group overflow-hidden flex items-center justify-center">
+        <div ref={webContainerRef} className="w-full h-full bg-slate-50 relative group overflow-hidden flex items-center justify-center">
           {transformedUrl ? (
             <iframe 
               src={finalUrl} 
@@ -229,9 +235,9 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
             />
           ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 bg-slate-900">
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 bg-slate-50">
               <Globe size={48} className="mb-2 opacity-50"/>
-              <p>請輸入網址</p>
+              <p className="font-black uppercase tracking-widest text-xs">請輸入網址</p>
             </div>
           )}
           {!isPlaying && <div className="absolute inset-0 bg-transparent z-10" />}
@@ -285,10 +291,10 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
           );
         } else {
            return (
-            <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center text-red-400 p-4 text-center">
+            <div className="w-full h-full bg-slate-50 flex flex-col items-center justify-center text-red-500 p-4 text-center">
                <AlertCircle size={48} className="mb-2 opacity-80"/>
-               <p className="font-bold">無效的 YouTube ID 或連結</p>
-               <p className="text-xs text-slate-500 mt-1">請重新確認輸入的內容</p>
+               <p className="font-black uppercase tracking-widest text-xs">無效的 YouTube ID 或連結</p>
+               <p className="text-[10px] text-slate-400 mt-1">請重新確認輸入的內容</p>
             </div>
            );
         }
@@ -303,7 +309,7 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
         );
       }
       
-      return <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center text-slate-500"><Youtube size={48} className="mb-2 opacity-50"/><p>請設定影片來源</p></div>;
+      return <div className="w-full h-full bg-slate-50 flex flex-col items-center justify-center text-slate-300"><Youtube size={48} className="mb-2 opacity-50"/><p className="font-black uppercase tracking-widest text-xs">請設定影片來源</p></div>;
       
     case 'text':
       return (
