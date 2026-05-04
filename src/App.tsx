@@ -5,9 +5,10 @@ import {
   Minimize2, LogOut, ShieldCheck, Key, AlertCircle, Clock, Share2, Link, Copy, X, Cast, Tag
 } from 'lucide-react';
 import { signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, Timestamp, onSnapshot, updateDoc, collection, addDoc, query, where, deleteDoc, orderBy } from 'firebase/firestore';
+import { doc, getDoc, setDoc, Timestamp, updateDoc, collection, addDoc, query, where, deleteDoc, orderBy, getDocs } from 'firebase/firestore';
 import { auth, db, googleProvider } from './firebase';
 import { TEMPLATES } from './constants';
+import { motion, AnimatePresence } from 'motion/react';
 import { TemplatePreview } from './components/TemplatePreview';
 import { LayoutRenderer } from './components/LayoutRenderer';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -16,6 +17,7 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { LicenseInput } from './components/LicenseInput';
 import { PricingModal } from './components/PricingModal';
 import { CustomLayoutCreator } from './components/CustomLayoutCreator';
+import { PlaybackProjects } from './components/PlaybackProjects';
 import { UserProfile } from './types/user';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { handleFirestoreError, OperationType } from './lib/firestore-utils';
@@ -41,6 +43,7 @@ function AppContent() {
   
   const [zoneConfigs, setZoneConfigs] = useState<any>({});
   const [activeZoneId, setActiveZoneId] = useState<any>(null);
+  const [activeZoneCategory, setActiveZoneCategory] = useState<string>('');
   const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
@@ -49,19 +52,139 @@ function AppContent() {
   const [sharedUrl, setSharedUrl] = useState('');
   const [isSharing, setIsSharing] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [isInvalidLink, setIsInvalidLink] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
   
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isCustomCreatorOpen, setIsCustomCreatorOpen] = useState(false);
   const [editingCustomLayout, setEditingCustomLayout] = useState<any>(null);
+  const [activeProject, setActiveProject] = useState<any>(null);
+  const [currentProjectItemIndex, setCurrentProjectItemIndex] = useState(0);
+  const [projectTemplatesCache, setProjectTemplatesCache] = useState<Record<string, any>>({});
   const playerRef = useRef<HTMLDivElement>(null);
 
-  const isPublicView = new URLSearchParams(window.location.search).has('share');
+  // Profile management
+  const fetchUserProfile = async (currentUser: any) => {
+    if (!currentUser) {
+      setUserProfile(null);
+      return;
+    }
+    
+    const userRef = doc(db, 'users', currentUser.uid);
+    try {
+      const userSnap = await getDoc(userRef);
+      const adminEmails = ["tsaikurt0921@gmail.com", "kurttsai0921@gmail.com"];
+      const isDefaultAdmin = adminEmails.includes(currentUser.email?.toLowerCase() || '');
+      
+      if (!userSnap.exists()) {
+        const now = new Date();
+        const trialExpiry = new Date(now);
+        trialExpiry.setDate(trialExpiry.getDate() + 7);
 
-  const [publicLoading, setPublicLoading] = useState(isPublicView);
+        const newProfile: UserProfile = {
+          uid: currentUser.uid,
+          email: currentUser.email || '',
+          role: isDefaultAdmin ? 'admin' : 'user',
+          trialExpiry: Timestamp.fromDate(trialExpiry),
+          subscriptionExpiry: Timestamp.fromDate(trialExpiry),
+          createdAt: Timestamp.fromDate(now)
+        };
+        await setDoc(userRef, newProfile);
+        setUserProfile(newProfile);
+      } else {
+        const data = userSnap.data() as UserProfile;
+        setUserProfile(data);
+        
+        // Auto-upgrade if email matches but role is not admin (one-time check)
+        if (isDefaultAdmin && data.role !== 'admin') {
+          await updateDoc(userRef, { role: 'admin' });
+          setUserProfile({ ...data, role: 'admin' });
+        }
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.GET, `users/${currentUser.uid}`);
+    }
+  };
+
+  const isPublicView = new URLSearchParams(window.location.search).has('share');
+  const isProjectView = new URLSearchParams(window.location.search).has('project');
+
+  const [publicLoading, setPublicLoading] = useState(isPublicView || isProjectView);
+
+  // Helper to fetch template data and cache it
+  const fetchTemplateToCache = async (templateId: string) => {
+    if (projectTemplatesCache[templateId]) return;
+    try {
+      const docRef = doc(db, 'savedTemplates', templateId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const templateData = {
+          id: docSnap.id,
+          name: data.name,
+          type: data.type,
+          zones: data.layout === 'custom' ? data.zones : null,
+          layout: data.layout,
+          zonesConfig: data.zonesConfig || {}
+        };
+        setProjectTemplatesCache(prev => ({ ...prev, [templateId]: templateData }));
+        return templateData;
+      }
+    } catch (e) {
+      console.error("Error pre-fetching template:", e);
+    }
+  };
+
+  // Pre-fetch loop
+  useEffect(() => {
+    if (view === 'project_playback' && activeProject?.items?.length > 0) {
+      // Fetch current and next 2 items to ensure smooth buffer
+      const itemsToFetch = [
+        activeProject.items[currentProjectItemIndex],
+        activeProject.items[(currentProjectItemIndex + 1) % activeProject.items.length],
+        activeProject.items[(currentProjectItemIndex + 2) % activeProject.items.length]
+      ].filter(item => item && !projectTemplatesCache[item.templateId]);
+
+      itemsToFetch.forEach(item => fetchTemplateToCache(item.templateId));
+    }
+  }, [view, activeProject, currentProjectItemIndex]);
+
+  // Project Playback Timer
+  useEffect(() => {
+    if (view === 'project_playback' && activeProject?.items?.length > 0) {
+      const currentItem = activeProject.items[currentProjectItemIndex];
+      const timer = setTimeout(() => {
+        setCurrentProjectItemIndex((prev) => (prev + 1) % activeProject.items.length);
+      }, (currentItem?.duration || 10) * 1000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [view, activeProject, currentProjectItemIndex]);
+
+  // Sync selectedTemplate with current index cache
+  useEffect(() => {
+    if (view === 'project_playback' && activeProject?.items?.length > 0) {
+      const currentItem = activeProject.items[currentProjectItemIndex];
+      const cached = projectTemplatesCache[currentItem.templateId];
+      if (cached) {
+        setSelectedTemplate(cached);
+        setZoneConfigs(cached.zonesConfig);
+        setTemplateSource(cached.layout === 'custom' ? 'custom' : 'system');
+      } else {
+        // Fallback if not cached yet
+        fetchTemplateToCache(currentItem.templateId).then(data => {
+            if (data) {
+                setSelectedTemplate(data);
+                setZoneConfigs(data.zonesConfig);
+                setTemplateSource(data.layout === 'custom' ? 'custom' : 'system');
+            }
+        });
+      }
+    }
+  }, [currentProjectItemIndex, activeProject, view, projectTemplatesCache]);
 
   // Fetch saved templates from Firestore
-  const fetchSavedTemplates = (userId?: string) => {
+  const fetchSavedTemplates = async (userId?: string) => {
     if (!userId) {
       setSavedTemplates([]);
       return;
@@ -73,27 +196,24 @@ function AppContent() {
       orderBy('createdAt', 'desc')
     );
 
-    return onSnapshot(q, (snapshot) => {
+    try {
+      const snapshot = await getDocs(q);
       const templates = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
       setSavedTemplates(templates);
-    }, (error) => {
+    } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'savedTemplates');
-    });
+    }
   };
 
   useEffect(() => {
-    let unsubscribe: any;
     if (user) {
-      unsubscribe = fetchSavedTemplates(user.uid);
+      fetchSavedTemplates(user.uid);
     } else {
       setSavedTemplates([]);
     }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
   }, [user]);
 
   useEffect(() => {
@@ -124,7 +244,8 @@ function AppContent() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const shareId = params.get('share');
-    console.log("Checking share ID:", shareId);
+    const projectId = params.get('project');
+    
     if (shareId) {
       const fetchShared = async () => {
         try {
@@ -132,7 +253,6 @@ function AppContent() {
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             const data = docSnap.data();
-            console.log("Shared data found:", data);
             setSelectedTemplate({
               id: 'shared',
               name: '公開播放',
@@ -142,79 +262,51 @@ function AppContent() {
             });
             setZoneConfigs(data.zonesData);
             setTemplateSource(data.layout === 'custom' ? 'custom' : 'system');
-            console.log("Setting view to public");
             setView('public');
             setPublicLoading(false);
           } else {
-            console.error("Shared document not found");
+            console.error("Shared display document not found");
+            setIsInvalidLink(true);
             setPublicLoading(false);
           }
         } catch (e) {
           handleFirestoreError(e, OperationType.GET, `sharedDisplays/${shareId}`);
+          setIsInvalidLink(true);
           setPublicLoading(false);
         }
       };
       fetchShared();
+    } else if (projectId) {
+      const fetchProject = async () => {
+        try {
+          const docRef = doc(db, 'playbackProjects', projectId);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setActiveProject({ id: docSnap.id, ...data });
+            setView('project_playback');
+            setPublicLoading(false);
+          } else {
+            console.error("Project document not found");
+            setIsInvalidLink(true);
+            setPublicLoading(false);
+          }
+        } catch (e) {
+          handleFirestoreError(e, OperationType.GET, `playbackProjects/${projectId}`);
+          setIsInvalidLink(true);
+          setPublicLoading(false);
+        }
+      };
+      fetchProject();
     }
   }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      console.log("Auth state changed. CurrentUser:", currentUser ? { uid: currentUser.uid, email: currentUser.email } : "null");
-      console.log("Firestore Config:", { 
-        projectId: db.app.options.projectId, 
-        databaseId: (db as any)._databaseId?.database || '(default)' 
-      });
+      setUser(currentUser);
       if (currentUser) {
-        setUser(currentUser);
-        // Check/Create profile
-        const userRef = doc(db, 'users', currentUser.uid);
-        console.log("Fetching user profile for path:", userRef.path);
-        try {
-          const userSnap = await getDoc(userRef);
-          console.log("User profile snap exists:", userSnap.exists());
-
-          if (!userSnap.exists()) {
-            const now = new Date();
-            const trialExpiry = new Date(now);
-            trialExpiry.setDate(trialExpiry.getDate() + 7);
-
-            const newProfile: UserProfile = {
-              uid: currentUser.uid,
-              email: currentUser.email || '',
-              role: currentUser.email === 'tsaikurt0921@gmail.com' ? 'admin' : 'user',
-              trialExpiry: Timestamp.fromDate(trialExpiry),
-              subscriptionExpiry: Timestamp.fromDate(trialExpiry), // Initial subscription is trial
-              createdAt: Timestamp.fromDate(now)
-            };
-            await setDoc(userRef, newProfile);
-            setUserProfile(newProfile);
-          } else {
-            // Listen for profile changes
-            console.log("Setting up onSnapshot for user profile");
-            onSnapshot(userRef, (doc) => {
-              console.log("onSnapshot update received for profile");
-              if (doc.exists()) {
-                const data = doc.data() as UserProfile;
-                setUserProfile(data);
-                
-                // Auto-upgrade if email matches but role is not admin
-                if (currentUser.email === 'tsaikurt0921@gmail.com' && data.role !== 'admin') {
-                  updateDoc(userRef, { role: 'admin' }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${currentUser.uid}`));
-                }
-              }
-            }, (error) => {
-              // Only report if still logged in to avoid noise during logout
-              if (auth.currentUser) {
-                handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
-              }
-            });
-          }
-        } catch (e) {
-          handleFirestoreError(e, OperationType.GET, `users/${currentUser.uid}`);
-        }
+        await fetchUserProfile(currentUser);
       } else {
-        setUser(null);
         setUserProfile(null);
       }
       setAuthLoading(false);
@@ -234,7 +326,9 @@ function AppContent() {
   const handleLogout = () => signOut(auth);
 
   const isAdmin = () => {
-    return userProfile?.role === 'admin' || userProfile?.role === 'co-admin' || user?.email === 'tsaikurt0921@gmail.com';
+    const adminEmails = ["tsaikurt0921@gmail.com", "kurttsai0921@gmail.com"];
+    const userEmail = user?.email?.toLowerCase() || '';
+    return userProfile?.role === 'admin' || userProfile?.role === 'co-admin' || adminEmails.includes(userEmail);
   };
 
   const isSubscribed = () => {
@@ -257,8 +351,9 @@ function AppContent() {
     }
   };
 
-  const handleZoneClick = (index: number) => {
+  const handleZoneClick = (index: number, category?: string) => {
     setActiveZoneId(index);
+    setActiveZoneCategory(category || '');
     setIsConfigPanelOpen(true);
   };
 
@@ -385,6 +480,21 @@ function AppContent() {
     );
   }
 
+  if (isInvalidLink) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-center">
+        <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 max-w-sm shadow-2xl">
+          <AlertCircle className="mx-auto text-red-500 mb-4" size={64} />
+          <h2 className="text-2xl font-bold text-white mb-2">內容不可用</h2>
+          <p className="text-slate-400 mb-6">此分享連結已失效、已被刪除或權限已變更。</p>
+          <a href="/" className="inline-block bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-full font-bold transition-colors">
+            返回首頁
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   if (authLoading && !isPublicView) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
@@ -393,24 +503,70 @@ function AppContent() {
     );
   }
 
-  if (view === 'public') {
+  if (view === 'public' || view === 'project_playback') {
     const isCustom = templateSource === 'custom';
-    const isPortrait = selectedTemplate.type === 'portrait';
+    const isPortrait = selectedTemplate?.type === 'portrait';
+    
+    // Determine the next template ID for pre-warming
+    const nextItemIndex = activeProject?.items ? (currentProjectItemIndex + 1) % activeProject.items.length : -1;
+    const nextItem = nextItemIndex !== -1 ? activeProject.items[nextItemIndex] : null;
+    const nextTemplate = nextItem ? projectTemplatesCache[nextItem.templateId] : null;
 
     return (
       <div 
         ref={playerRef}
         className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden"
       >
-        <div className={`relative w-full h-full ${isPortrait ? 'aspect-[9/16]' : 'aspect-video'}`}>
-          <LayoutRenderer 
-            layout={selectedTemplate.layout} 
-            zonesData={zoneConfigs} 
-            onZoneClick={() => {}} 
-            isPlaying={true}
-            customZones={isCustom ? selectedTemplate.zones : null}
-          />
-        </div>
+        <AnimatePresence mode="wait">
+          {selectedTemplate ? (
+            <motion.div 
+              key={selectedTemplate.id + currentProjectItemIndex}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.8, ease: "easeInOut" }}
+              className={`relative w-full h-full ${isPortrait ? 'aspect-[9/16]' : 'aspect-video'}`}
+            >
+              <LayoutRenderer 
+                layout={selectedTemplate.layout} 
+                zonesData={zoneConfigs} 
+                onZoneClick={() => {}} 
+                isPlaying={true}
+                customZones={isCustom ? selectedTemplate.zones : null}
+              />
+            </motion.div>
+          ) : (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex flex-col items-center gap-4"
+            >
+              <Loader2 className="animate-spin text-blue-600" size={48} />
+              {view === 'project_playback' && <p className="text-white/50 text-sm font-bold uppercase tracking-widest">正在載入播放內容...</p>}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Pre-warming layer (Hidden) */}
+        {view === 'project_playback' && nextTemplate && (
+          <div className="hidden pointer-events-none absolute" aria-hidden="true" style={{ width: 1, height: 1, opacity: 0 }}>
+             <LayoutRenderer 
+                layout={nextTemplate.layout} 
+                zonesData={nextTemplate.zonesConfig} 
+                onZoneClick={() => {}} 
+                isPlaying={false}
+                customZones={nextTemplate.layout === 'custom' ? nextTemplate.zones : null}
+              />
+          </div>
+        )}
+
+        {/* Project Progress Overlay */}
+        {view === 'project_playback' && activeProject && (
+          <div className="absolute top-6 left-6 p-4 bg-black/40 backdrop-blur-md rounded-2xl border border-white/10 z-50 pointer-events-none">
+            <p className="text-[10px] text-white/40 font-black uppercase tracking-widest mb-1">播放計畫: {activeProject.name}</p>
+            <p className="text-white font-bold text-sm">項目 {currentProjectItemIndex + 1} / {activeProject.items.length}</p>
+          </div>
+        )}
 
         {/* Fullscreen Toggle Button */}
         <button 
@@ -494,7 +650,10 @@ function AppContent() {
             <p className="text-slate-500">您的 7 天試用期已屆滿，請輸入序號開通正式權限。</p>
           </div>
           
-          <LicenseInput onActivated={() => setView('templates')} />
+          <LicenseInput onActivated={() => {
+            if (user) fetchUserProfile(user);
+            setView('templates');
+          }} />
           
           <div className="pt-4 space-y-3">
             <button 
@@ -583,6 +742,10 @@ function AppContent() {
                   自訂版型 ({userProfile?.customTemplates?.length || 0}/3)
                   {templateSource === 'custom' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />}
                 </button>
+                <button onClick={() => { setTemplateSource('playback'); setSelectedTemplate(null); }} className={`pb-3 px-1 text-sm font-bold transition-colors relative ${templateSource === 'playback' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  播放專案
+                  {templateSource === 'playback' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />}
+                </button>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -602,8 +765,14 @@ function AppContent() {
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-8">
-            {currentTemplates.length === 0 && (
-              <div className="col-span-full py-32 text-center bg-white rounded-3xl border border-dashed border-slate-200">
+            {templateSource === 'playback' ? (
+              <div className="col-span-full">
+                <PlaybackProjects userId={user.uid} savedTemplates={savedTemplates} />
+              </div>
+            ) : (
+              <>
+                {currentTemplates.length === 0 && (
+                  <div className="col-span-full py-32 text-center bg-white rounded-3xl border border-dashed border-slate-200">
                 {templateSource === 'user' ? (
                   <div className="space-y-4">
                     <FolderHeart size={64} className="mx-auto text-slate-200"/>
@@ -625,14 +794,14 @@ function AppContent() {
                 )}
               </div>
             )}
-            {currentTemplates.map(t => {
-              const isCustom = templateSource === 'custom' || (templateSource === 'user' && t.baseTemplateId === 'custom');
-              const baseTemplate = templateSource === 'user' ? TEMPLATES.find(sys => sys.id === t.baseTemplateId) : (isCustom ? null : t);
-              const layout = isCustom ? (t.layout || 'custom') : (baseTemplate ? baseTemplate.layout : 'L_FULL_16_9');
-              const type = isCustom ? t.type : (baseTemplate ? baseTemplate.type : t.type);
-              
-              return (
-                <div key={t.id} onClick={() => setSelectedTemplate(t)} className={`cursor-pointer group relative rounded-3xl bg-white border-2 transition-all duration-500 hover:shadow-2xl ${selectedTemplate?.id === t.id ? 'border-blue-600 shadow-xl shadow-blue-100' : 'border-transparent shadow-sm hover:border-slate-200'}`}>
+                {currentTemplates.map(t => {
+                  const isCustom = templateSource === 'custom' || (templateSource === 'user' && t.baseTemplateId === 'custom');
+                  const baseTemplate = templateSource === 'user' ? TEMPLATES.find(sys => sys.id === t.baseTemplateId) : (isCustom ? null : t);
+                  const layout = isCustom ? (t.layout || 'custom') : (baseTemplate ? baseTemplate.layout : 'L_FULL_16_9');
+                  const type = isCustom ? t.type : (baseTemplate ? baseTemplate.type : t.type);
+                  
+                  return (
+                    <div key={t.id} onClick={() => setSelectedTemplate(t)} className={`cursor-pointer group relative rounded-3xl bg-white border-2 transition-all duration-500 hover:shadow-2xl ${selectedTemplate?.id === t.id ? 'border-blue-600 shadow-xl shadow-blue-100' : 'border-transparent shadow-sm hover:border-slate-200'}`}>
                   <div className="aspect-[4/3] p-6 flex items-center justify-center relative overflow-hidden bg-slate-50 rounded-t-[22px]">
                     <div className={`transition-transform duration-700 group-hover:scale-110 ${type === 'landscape' ? 'w-full' : 'h-full'}`}>
                        <TemplatePreview layout={layout} type={type} customZones={isCustom ? (t.zones || null) : null} />
@@ -684,9 +853,11 @@ function AppContent() {
                 </div>
               );
             })}
+          </>
+        )}
           </div>
         </main>
-        <div className={`fixed bottom-0 left-0 right-0 bg-white/90 border-t border-slate-200 p-6 transition-all duration-500 z-50 backdrop-blur-xl ${selectedTemplate ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}>
+        <div className={`fixed bottom-0 left-0 right-0 bg-white/90 border-t border-slate-200 p-6 transition-all duration-500 z-50 backdrop-blur-xl ${selectedTemplate && templateSource !== 'playback' ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}>
           <div className="max-w-[1600px] mx-auto flex justify-between items-center">
             <div className="flex items-center gap-6">
               <div className="h-14 w-14 bg-blue-50 rounded-2xl flex items-center justify-center border border-blue-100 shadow-inner">
@@ -714,7 +885,12 @@ function AppContent() {
               >
                 關閉視窗
               </button>
-              <LicenseInput onActivated={() => setIsLicenseModalOpen(false)} />
+              <LicenseInput 
+                onActivated={() => {
+                  setIsLicenseModalOpen(false);
+                  if (user) fetchUserProfile(user);
+                }} 
+              />
             </div>
           </div>
         )}
@@ -796,11 +972,12 @@ function AppContent() {
                </button>
                <button 
                  onClick={handleShare} 
-                 disabled={isSharing}
-                 className="flex items-center gap-2 px-4 py-2 rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all text-sm font-bold disabled:opacity-50"
+                 disabled={true}
+                 className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed text-sm font-bold opacity-70"
+                 title="系統優化維護中，暫時停用"
                >
-                 {isSharing ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />}
-                 播放 URI
+                 <Share2 size={16} />
+                 播放 URI (維護中)
                </button>
                <button onClick={() => setZoneConfigs({})} className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-all text-sm font-bold">
                  <Trash2 size={16} /> 清空內容
@@ -836,6 +1013,7 @@ function AppContent() {
         {isConfigPanelOpen && (
           <ConfigPanel 
             activeZoneId={activeZoneId} 
+            activeZoneCategory={activeZoneCategory}
             zoneConfigs={zoneConfigs} 
             handleSaveZoneConfig={handleSaveZoneConfig} 
             setIsConfigPanelOpen={setIsConfigPanelOpen} 
@@ -947,7 +1125,12 @@ function AppContent() {
               >
                 關閉視窗
               </button>
-              <LicenseInput onActivated={() => setIsLicenseModalOpen(false)} />
+              <LicenseInput 
+                onActivated={() => {
+                  setIsLicenseModalOpen(false);
+                  if (user) fetchUserProfile(user);
+                }} 
+              />
             </div>
           </div>
         )}

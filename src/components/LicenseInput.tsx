@@ -12,7 +12,11 @@ export const LicenseInput = ({ onActivated }: { onActivated: () => void }) => {
 
   const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (key.length !== 16) {
+    
+    // Clean key: remove whitespace and hyphens
+    const cleanKey = key.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+
+    if (cleanKey.length !== 16) {
       setError('請輸入正確的 16 碼序號');
       return;
     }
@@ -21,7 +25,7 @@ export const LicenseInput = ({ onActivated }: { onActivated: () => void }) => {
     setError(null);
 
     try {
-      const keyRef = doc(db, 'licenseKeys', key);
+      const keyRef = doc(db, 'licenseKeys', cleanKey);
       const keySnap = await getDoc(keyRef);
 
       if (!keySnap.exists()) {
@@ -46,14 +50,14 @@ export const LicenseInput = ({ onActivated }: { onActivated: () => void }) => {
       if (!userSnap.exists()) throw new Error('使用者資料不存在');
       
       const userData = userSnap.data();
-      const currentExpiry = userData.subscriptionExpiry.toDate();
+      const currentExpiry = userData.subscriptionExpiry ? userData.subscriptionExpiry.toDate() : new Date();
       const now = new Date();
       
       // Calculate new expiry
       // If current expiry is in the past, start from now
       const baseDate = currentExpiry > now ? currentExpiry : now;
       const newExpiry = new Date(baseDate);
-      newExpiry.setMonth(newExpiry.getMonth() + keyData.durationMonths);
+      newExpiry.setMonth(newExpiry.getMonth() + (keyData.durationMonths || 1));
 
       // Update user and key
       await updateDoc(userRef, {
@@ -62,7 +66,8 @@ export const LicenseInput = ({ onActivated }: { onActivated: () => void }) => {
 
       await updateDoc(keyRef, {
         isUsed: true,
-        usedBy: user.uid
+        usedBy: user.uid,
+        usedByEmail: user.email
       });
 
       setSuccess(true);
@@ -76,6 +81,8 @@ export const LicenseInput = ({ onActivated }: { onActivated: () => void }) => {
       setLoading(false);
     }
   };
+
+  const cleanKey = key.replace(/[^A-Z0-9]/gi, '').toUpperCase();
 
   return (
     <div className="max-w-md mx-auto p-8 bg-white border border-slate-200 rounded-[2.5rem] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.1)]">
@@ -96,7 +103,7 @@ export const LicenseInput = ({ onActivated }: { onActivated: () => void }) => {
             value={key}
             onChange={(e) => setKey(e.target.value.toUpperCase())}
             placeholder="XXXX-XXXX-XXXX-XXXX"
-            maxLength={16}
+            maxLength={25}
             className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-6 py-5 text-slate-900 font-mono text-xl tracking-[0.2em] focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all placeholder:text-slate-300"
             disabled={loading || success}
           />
@@ -118,7 +125,7 @@ export const LicenseInput = ({ onActivated }: { onActivated: () => void }) => {
 
         <button
           type="submit"
-          disabled={loading || success || key.length !== 16}
+          disabled={loading || success || cleanKey.length !== 16}
           className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-black py-5 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100 active:scale-95"
         >
           {loading ? <Loader2 className="animate-spin" size={24} /> : <span className="text-lg">立即啟用</span>}

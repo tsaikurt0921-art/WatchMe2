@@ -6,11 +6,13 @@ import { UserProfile } from '../types/user';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 import { PricingManagement } from './PricingManagement';
 import { EmailManagement } from './EmailManagement';
+import { AssetManagement } from './AssetManagement';
 
 export const AdminDashboard = ({ currentUserProfile }: { currentUserProfile: UserProfile | null }) => {
   const [users, setUsers] = useState<any[]>([]);
   const [keys, setKeys] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'users' | 'keys' | 'pricing' | 'email'>('users');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState<'users' | 'keys' | 'pricing' | 'email' | 'assets'>('users');
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [duration, setDuration] = useState<number>(1);
@@ -113,7 +115,8 @@ export const AdminDashboard = ({ currentUserProfile }: { currentUserProfile: Use
       alert('只有最高管理員可以管理權限');
       return;
     }
-    if (newRole === 'admin' && currentUserProfile?.email !== 'tsaikurt0921@gmail.com') {
+    const adminEmails = ["tsaikurt0921@gmail.com", "kurttsai0921@gmail.com"];
+    if (newRole === 'admin' && !adminEmails.includes(currentUserProfile?.email?.toLowerCase() || '')) {
       alert('只有創始管理員可以指派最高管理員');
       return;
     }
@@ -279,6 +282,12 @@ export const AdminDashboard = ({ currentUserProfile }: { currentUserProfile: Use
             >
               信箱管理
             </button>
+            <button 
+              onClick={() => setActiveTab('assets')}
+              className={`px-6 py-2.5 rounded-xl text-sm font-black transition-all whitespace-nowrap ${activeTab === 'assets' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              素材管理
+            </button>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
@@ -290,6 +299,10 @@ export const AdminDashboard = ({ currentUserProfile }: { currentUserProfile: Use
               <div className="p-8">
                 <EmailManagement />
               </div>
+            ) : activeTab === 'assets' ? (
+              <div className="p-8">
+                <AssetManagement />
+              </div>
             ) : (
               <>
                 <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
@@ -297,7 +310,18 @@ export const AdminDashboard = ({ currentUserProfile }: { currentUserProfile: Use
                     {activeTab === 'users' ? <Users size={18} /> : <Key size={18} />}
                     <span>{activeTab === 'users' ? `註冊名單 (${users.length})` : `序號列表 (${keys.length})`}</span>
                   </div>
-                  <button onClick={activeTab === 'users' ? fetchUsers : fetchKeys} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-blue-600 transition-colors">重新整理</button>
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="搜尋 Email 或 序號..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-medium focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all w-64"
+                      />
+                    </div>
+                    <button onClick={activeTab === 'users' ? fetchUsers : fetchKeys} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-blue-600 transition-colors">重新整理</button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -319,7 +343,9 @@ export const AdminDashboard = ({ currentUserProfile }: { currentUserProfile: Use
                           <Loader2 className="animate-spin mx-auto text-indigo-600" size={40} />
                         </td>
                       </tr>
-                    ) : users.map(user => (
+                    ) : users.filter(user => 
+                        user.email.toLowerCase().includes(searchTerm.toLowerCase())
+                      ).map(user => (
                       <tr key={user.id} className="hover:bg-slate-50/50 transition-colors group">
                         <td className="px-8 py-6 font-bold text-slate-900">{user.email}</td>
                         <td className="px-8 py-6 text-sm text-slate-500 font-medium">
@@ -389,7 +415,10 @@ export const AdminDashboard = ({ currentUserProfile }: { currentUserProfile: Use
                           <Loader2 className="animate-spin mx-auto text-indigo-600" size={40} />
                         </td>
                       </tr>
-                    ) : keys.map(k => (
+                    ) : keys.filter(k => 
+                        k.key.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                        (k.usedByEmail && k.usedByEmail.toLowerCase().includes(searchTerm.toLowerCase()))
+                      ).map(k => (
                       <tr key={k.id} className="hover:bg-slate-50/50 transition-colors group">
                         <td className="px-8 py-6 font-mono text-indigo-600 font-black tracking-wider">{k.key}</td>
                         <td className="px-8 py-6 text-sm text-slate-500 font-bold">{k.durationMonths} 個月</td>
@@ -400,8 +429,8 @@ export const AdminDashboard = ({ currentUserProfile }: { currentUserProfile: Use
                             {k.isUsed ? '已使用' : '未使用'}
                           </span>
                         </td>
-                        <td className="px-8 py-6 text-xs text-slate-400 font-medium">
-                          {k.usedBy || '-'}
+                        <td className="px-8 py-6 text-xs text-slate-600 font-bold">
+                          {k.usedByEmail || (k.usedBy ? (users.find(u => u.id === k.usedBy)?.email || k.usedBy) : '-')}
                         </td>
                         <td className="px-8 py-6 text-right flex justify-end gap-2">
                           <button 

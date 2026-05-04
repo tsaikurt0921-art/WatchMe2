@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Mail, Save, Loader2, Info } from 'lucide-react';
+import { Mail, Save, Loader2, Info, Send } from 'lucide-react';
 import { handleFirestoreError, OperationType } from '../lib/firestore-utils';
 
 export const EmailManagement = () => {
@@ -12,6 +12,8 @@ export const EmailManagement = () => {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testEmail, setTestEmail] = useState('');
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,12 +23,15 @@ export const EmailManagement = () => {
 
   const fetchSettings = async () => {
     setLoading(true);
+    setError(null);
     try {
       const docSnap = await getDoc(doc(db, 'settings', 'global'));
       if (docSnap.exists()) {
         setSettings(docSnap.data() as any);
       }
-    } catch (err) {
+    } catch (err: any) {
+      console.error('Fetch settings error:', err);
+      setError(err.message || '無法讀取信箱設定');
       handleFirestoreError(err, OperationType.GET, 'settings/global');
     } finally {
       setLoading(false);
@@ -49,6 +54,32 @@ export const EmailManagement = () => {
       setError(err.message || '儲存失敗，請檢查權限或網路連線');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const sendTestEmail = async () => {
+    if (!testEmail || !testEmail.includes('@')) {
+      setError('請輸入有效的測試信箱');
+      return;
+    }
+    setTesting(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/email/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: testEmail })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setSuccessMessage('測試信件已寄出，請查收');
+      } else {
+        setError(data.error || '測試寄信失敗，請檢查環境變數設定');
+      }
+    } catch (err: any) {
+      setError('連線失敗: ' + err.message);
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -115,6 +146,31 @@ export const EmailManagement = () => {
           {saving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
           儲存信箱設定
         </button>
+      </div>
+
+      <div className="bg-slate-50 border border-slate-200 rounded-3xl p-8 space-y-4">
+        <div className="flex items-center gap-2 text-slate-500 font-bold text-sm">
+          <Send size={16} />
+          <span>發送測試信件</span>
+        </div>
+        <div className="flex gap-2">
+          <input 
+            type="email" 
+            placeholder="輸入您的測試信箱"
+            value={testEmail}
+            onChange={(e) => setTestEmail(e.target.value)}
+            className="flex-1 bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all"
+          />
+          <button 
+            onClick={sendTestEmail}
+            disabled={testing}
+            className="bg-slate-800 text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 hover:bg-slate-900 transition-all disabled:opacity-50"
+          >
+            {testing ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+            發送
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-400 font-medium">使用此功能前，請確保已在系統 Environment Variables 中設定好 SMTP 資訊。</p>
       </div>
     </div>
   );

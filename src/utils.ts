@@ -75,3 +75,8 @@ export const isKnownBlockedUrl = (url: string | null) => {
   }
   return false;
 };
+
+// 將此函數強制設為回傳 false，全面鎖死伺服器端 Proxy 請求，確保 Cloud Run 不會因為網頁嵌入而頻繁啟動
+export const shouldUseProxy = (url: string | null) => {
+  return false;
+};

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Loader2, MapPin, Sun, Moon, CloudSun, Cloud, CloudRain, Snowflake, CloudLightning, Globe, ExternalLink, Youtube, AlertCircle
 } from 'lucide-react';
-import { getYouTubeVideoId, transformWebUrl, isKnownBlockedUrl } from '../utils';
+import { getYouTubeVideoId, transformWebUrl, isKnownBlockedUrl, shouldUseProxy } from '../utils';
 import { DEFAULT_TEXT_BG } from '../constants';
 
 const getWeatherIcon = (code: number, isDay: number) => {
@@ -28,7 +28,7 @@ const getWeatherStatusText = (code: number) => {
   return map[code] || '多雲';
 };
 
-export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
+export const ZoneContentRenderer = ({ content, isPlaying, category }: any) => {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [weatherData, setWeatherData] = useState<any>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -177,17 +177,35 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
 
     case 'image':
       if (!content.images || content.images.length === 0) return null;
+      const is916 = category === '9:16';
+      
       return (
         <div className="w-full h-full relative overflow-hidden bg-black">
-          {content.images.map((img: string, idx: number) => (
-             <img 
-               key={idx} 
-               src={img} 
-               alt={`Slide ${idx}`} 
-               referrerPolicy="no-referrer"
-               className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${idx === currentSlide ? 'opacity-100' : 'opacity-0'}`} 
-             />
-          ))}
+          {content.images.map((img: string, idx: number) => {
+            const isActive = idx === currentSlide;
+            return (
+              <div 
+                key={idx} 
+                className={`absolute inset-0 transition-opacity duration-1000 ${isActive ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}
+              >
+                {/* 背景模糊層 - 僅在 9:16 且非滿版時強化視覺 */}
+                {is916 && (
+                  <img 
+                    src={img} 
+                    alt="" 
+                    referrerPolicy="no-referrer"
+                    className="absolute inset-0 w-full h-full object-cover blur-xl opacity-50 z-0" 
+                  />
+                )}
+                <img 
+                  src={img} 
+                  alt={`Slide ${idx}`} 
+                  referrerPolicy="no-referrer"
+                  className={`absolute inset-0 w-full h-full ${is916 ? 'object-contain' : 'object-cover'} z-10`} 
+                />
+              </div>
+            );
+          })}
         </div>
       );
     case 'web':
@@ -205,15 +223,20 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
             <video 
               src={transformedUrl}
               className="w-full h-full object-contain pointer-events-none"
-              autoPlay loop muted playsInline
+              autoPlay={isPlaying} 
+              loop 
+              muted={!isPlaying || content.soundEnabled === false} 
+              playsInline
             />
             {!isPlaying && <div className="absolute inset-0 bg-transparent" />}
           </div>
          );
       }
       
-      // Use proxy for all URLs to bypass X-Frame-Options
-      const finalUrl = `/api/proxy?url=${encodeURIComponent(transformedUrl)}`;
+      // Smart Proxy Choice: Only use proxy if necessary to bypass X-Frame-Options
+      const finalUrl = shouldUseProxy(transformedUrl) 
+        ? `/api/proxy?url=${encodeURIComponent(transformedUrl)}`
+        : transformedUrl;
 
       return (
         <div ref={webContainerRef} className="w-full h-full bg-slate-50 relative group overflow-hidden flex items-center justify-center">
@@ -261,7 +284,9 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
         const videoId = getYouTubeVideoId(content.url);
         if (videoId) {
           const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '*';
-          const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&origin=${encodeURIComponent(currentOrigin)}`;
+          const muteParam = (!isPlaying || content.soundEnabled === false) ? 1 : 0;
+          const autoplayParam = isPlaying ? 1 : 0;
+          const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=${autoplayParam}&mute=${muteParam}&loop=1&playlist=${videoId}&origin=${encodeURIComponent(currentOrigin)}`;
           
           return (
             <div className="w-full h-full bg-black relative group">
@@ -303,7 +328,14 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
       if (content.videoSourceType === 'file' && content.url) {
         return (
           <div className="w-full h-full bg-black relative flex items-center justify-center">
-            <video src={content.url} className="w-full h-full object-contain pointer-events-none" autoPlay loop muted playsInline />
+            <video 
+                src={content.url} 
+                className="w-full h-full object-contain pointer-events-none" 
+                autoPlay={isPlaying} 
+                loop 
+                muted={!isPlaying || content.soundEnabled === false} 
+                playsInline 
+            />
             {!isPlaying && <div className="absolute inset-0 bg-transparent z-10" />}
           </div>
         );
@@ -317,6 +349,33 @@ export const ZoneContentRenderer = ({ content, isPlaying }: any) => {
           <div className="absolute inset-0 bg-black/40" />
           <div className="relative z-10 w-full max-h-full overflow-hidden flex items-center justify-center">
              <h2 className="text-white font-bold text-2xl md:text-4xl drop-shadow-lg break-words whitespace-pre-wrap overflow-wrap-anywhere">{content.text || "請輸入文字內容"}</h2>
+          </div>
+        </div>
+      );
+    case 'preset':
+      const isPreset916 = category === '9:16';
+      return (
+        <div className="w-full h-full relative flex items-center justify-center p-8 text-center overflow-hidden">
+          {/* 背景層 - 處理非 9:16 比例圖片 */}
+          {isPreset916 && (
+            <img 
+              src={content.assetUrl} 
+              alt="" 
+              referrerPolicy="no-referrer"
+              className="absolute inset-0 w-full h-full object-cover blur-xl opacity-30 z-0"
+            />
+          )}
+          <img 
+            src={content.assetUrl} 
+            alt="Preset Background" 
+            referrerPolicy="no-referrer"
+            className={`absolute inset-0 w-full h-full ${isPreset916 ? 'object-contain' : 'object-cover'} z-10`}
+          />
+          {/* 移除全域遮罩以還原底圖原色 */}
+          <div className="relative z-20 w-full max-h-full overflow-hidden flex items-center justify-center">
+             <h2 className="text-slate-800 font-black text-2xl md:text-5xl drop-shadow-[0_0_20px_rgba(255,255,255,0.9)] break-words whitespace-pre-wrap overflow-wrap-anywhere leading-tight tracking-tight">
+               {content.text || ""}
+             </h2>
           </div>
         </div>
       );

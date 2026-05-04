@@ -74,6 +74,15 @@
         "name": { "type": "string" },
         "baseTemplateId": { "type": "string" },
         "zonesConfig": { "type": "object" },
+        "audioConfig": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string" },
+            "name": { "type": "string" },
+            "autoplay": { "type": "boolean" },
+            "loop": { "type": "boolean" }
+          }
+        },
         "type": { "type": "string", "enum": ["landscape", "portrait"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
@@ -102,9 +111,47 @@
         "emailSubject": { "type": "string" },
         "emailTemplate": { "type": "string" }
       }
+    },
+    "TemplateAsset": {
+      "title": "Template Asset",
+      "description": "Pre-designed image assets for layout creation",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string", "format": "uri" },
+        "category": { "type": "string", "enum": ["16:9", "9:16", "banner"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "url", "category", "createdAt"]
+    },
+    "playbackProject": {
+      "title": "Playback Project",
+      "description": "A collection of templates ordered for sequential playback",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "items": { 
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "templateId": { "type": "string" },
+              "duration": { "type": "number", "description": "Seconds to display this template" }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "items"]
     }
   },
   "firestore": {
+    "/playbackProjects/{projectId}": {
+      "schema": "playbackProject",
+      "description": "User created playback sequences"
+    },
     "/users/{userId}": {
       "schema": "User",
       "description": "User subscription and role data"
@@ -128,6 +175,10 @@
     "/settings/global": {
       "schema": "AppSettings",
       "description": "Global app settings"
+    },
+    "/templateAssets/{assetId}": {
+      "schema": "TemplateAsset",
+      "description": "System-provided image assets for layouts"
     }
   }
 }

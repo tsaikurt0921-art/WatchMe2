@@ -1,39 +1,61 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
-import axios from "axios";
-import path from "path";
+import compression from "compression";
 import { fileURLToPath } from "url";
+import path from "path";
+import axios from "axios";
 import crypto from "crypto";
 import admin from "firebase-admin";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import fs from "fs";
 import "dotenv/config";
+import nodemailer from "nodemailer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const app = express();
 
-// Initialize Firebase Admin
-let db: any;
-
-const firebaseConfigPath = path.join(__dirname, 'firebase-applet-config.json');
-if (fs.existsSync(firebaseConfigPath)) {
-  try {
-    const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        projectId: firebaseConfig.projectId,
-      });
-    }
-    
-    // Use modular getFirestore which supports databaseId as first argument
-    const dbId = firebaseConfig.firestoreDatabaseId || '(default)';
-    db = getFirestore(dbId);
-    
-    console.log(`[Firebase Admin] Initialized. Project: ${firebaseConfig.projectId}, Database: ${dbId}`);
-  } catch (err) {
-    console.error("[Firebase Admin] Initialization error:", err);
-    db = getFirestore(); // Final fallback
+// Instant-kill for bots and crawlers to minimize Cloud Run CPU usage duration
+app.use((req, res, next) => {
+  const ua = req.headers['user-agent'] || '';
+  // Check for common bots, crawlers, and social media scrapers
+  if (/bot|crawler|spider|facebookexternalhit|googlebot|bingbot|slurp|ia_archiver/i.test(ua)) {
+    return res.status(403).send('Access denied for crawlers.');
   }
+  next();
+});
+
+// Enable Gzip compression to reduce transfer size and CPU usage duration
+app.use(compression());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Initialize Firebase Admin (Lazy)
+let db: any = null;
+
+function getDb() {
+  if (db) return db;
+  const firebaseConfigPath = path.join(__dirname, 'firebase-applet-config.json');
+  if (fs.existsSync(firebaseConfigPath)) {
+    try {
+      const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
+      if (!admin.apps.length) {
+        admin.initializeApp({
+          projectId: firebaseConfig.projectId,
+        });
+      }
+      
+      const dbId = firebaseConfig.firestoreDatabaseId || '(default)';
+      db = getFirestore(dbId);
+      
+      console.log(`[Firebase Admin] Lazy Initialized. Project: ${firebaseConfig.projectId}, Database: ${dbId}`);
+      return db;
+    } catch (err) {
+      console.error("[Firebase Admin] Initialization error:", err);
+      db = getFirestore();
+      return db;
+    }
+  }
+  return null;
 }
 
 // ECPay Helper Functions
@@ -49,13 +71,14 @@ function generateCheckMacValue(params: any, hashKey: string, hashIV: string) {
   // 3. Prepend HashKey and append HashIV
   const rawString = `HashKey=${hashKey}&${query}&HashIV=${hashIV}`;
 
-  // 4. URL Encode
-  // JS encodeURIComponent is close to .NET's UrlEncode but needs specific tweaks
+  // 5. Replace specific characters to match ECPay's requirement
+  // Note: encodeURIComponent doesn't encode ! ( ) * - . _ ~
+  // But ECPay documentation often shows them being encoded and then replaced.
+  // The most critical one is %20 -> + and ~ -> %7e
   let encoded = encodeURIComponent(rawString).toLowerCase();
-  
-  // 5. Replace specific characters to match ECPay's RFC 1738 requirement
   encoded = encoded
     .replace(/%20/g, '+')
+    .replace(/~/g, '%7e') // Critical fix for Node.js/TypeScript
     .replace(/%2d/g, '-')
     .replace(/%5f/g, '_')
     .replace(/%2e/g, '.')
@@ -69,24 +92,145 @@ function generateCheckMacValue(params: any, hashKey: string, hashIV: string) {
   return hash.toUpperCase();
 }
 
+async function sendNotificationEmail(userEmail: string, data: { expiryDate: string, duration: string }) {
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM_EMAIL } = process.env;
+  
+  if (!SMTP_HOST || !SMTP_PASS) {
+    throw new Error("SMTP_HOST 或 SMTP_PASS 環境變數缺失");
+  }
+
+  // Get settings from Firestore
+  const settingsSnap = await db.collection('settings').doc('global').get();
+  const settings = settingsSnap.exists ? settingsSnap.data() : {
+    emailSender: 'Broadme',
+    emailSubject: '您的 Broadme 授權序號',
+    emailTemplate: '感謝您的購買！您的帳號使用Broadme-ADS時間到期日為{{時間到期日}}\n時長：{{duration}} 個月'
+  };
+
+  const transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: parseInt(SMTP_PORT || '587'),
+    secure: SMTP_PORT === '465',
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+
+  let subject = settings.emailSubject;
+  let text = settings.emailTemplate;
+
+  // Replace placeholders
+  const replacements: { [key: string]: string } = {
+    '{{時間到期日}}': data.expiryDate,
+    '{{expiry_date}}': data.expiryDate, // Legacy support
+    '{{duration}}': data.duration,
+    '{{license_key}}': '自動開通'
+  };
+
+  Object.keys(replacements).forEach(key => {
+    // Escape special characters in key for regex
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    subject = subject.replace(new RegExp(escapedKey, 'g'), replacements[key]);
+    text = text.replace(new RegExp(escapedKey, 'g'), replacements[key]);
+  });
+
+  // Create HTML version with preserved line breaks
+  const htmlContent = text.replace(/\n/g, '<br>');
+
+  console.log(`[Email] Final template after replacement: \nSubject: ${subject}\nContent: ${text.substring(0, 100)}...`);
+
+  await transporter.sendMail({
+    from: `"${settings.emailSender || 'Broadme'}" <${SMTP_FROM_EMAIL || SMTP_USER}>`,
+    to: userEmail,
+    subject: subject,
+    text: text,
+    html: `
+      <div style="font-family: sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 20px; border-radius: 10px;">
+        <h2 style="color: #4f46e5; border-bottom: 2px solid #f3f4f6; padding-bottom: 10px;">${subject}</h2>
+        <div style="padding: 20px 0; font-size: 16px; white-space: pre-wrap;">
+          ${htmlContent}
+        </div>
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #999; text-align: center;">
+          此信件由系統自動發出，請勿直接回覆。<br>
+          © ${new Date().getFullYear()} Broadme 客服團隊
+        </div>
+      </div>
+    `,
+  });
+
+  console.log(`[Email] Notification sent to ${userEmail}`);
+  return true;
+}
+
 async function startServer() {
-  const app = express();
   const PORT = 3000;
 
+  // Use higher limit for large template payloads
   app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true }));
 
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
+  // Test Email Endpoint
+  app.post("/api/email/test", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
+    
+    const firestoredb = getDb();
+    if (!firestoredb) return res.status(500).json({ error: "Database not available" });
+
+    try {
+      await sendNotificationEmail(email, {
+        expiryDate: new Date().toLocaleDateString('zh-TW'),
+        duration: "測試"
+      });
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("[Email Test] Error:", error);
+      res.status(500).json({ error: error.message || "發送失敗" });
+    }
+  });
+
   // ECPay Payment Endpoint
   app.post("/api/payment/ecpay", async (req, res) => {
     const { planId, userId, userEmail } = req.body;
+    const firestoredb = getDb();
+    if (!firestoredb) return res.status(500).json({ error: "Database not available" });
     
-    // Use Stage credentials if ECPAY_URL is stage, unless user provided their own
-    let ECPAY_URL = process.env.ECPAY_URL || "https://payment-stage.ecpay.com.tw/Cashier/AioCheckout/V5";
+    // 1. Get MerchantID from Env
+    const MERCHANT_ID = (process.env.ECPAY_MERCHANT_ID || '').trim();
+    const testIDs = ['2000132', '3002607', '2000933'];
+    
+    // 2. Determine if we are in Test or Production
+    let isActuallyTest = false;
+    let finalMerchantID = MERCHANT_ID;
+
+    if (!MERCHANT_ID) {
+      console.warn("[ECPay] ECPAY_MERCHANT_ID is MISSING! Defaulting to test ID 3002607.");
+      finalMerchantID = '3002607';
+      isActuallyTest = true;
+    } else {
+      isActuallyTest = testIDs.includes(MERCHANT_ID);
+    }
+
+    // 3. Determine ECPay URL
+    let ECPAY_URL = process.env.ECPAY_URL;
+    if (!ECPAY_URL || ECPAY_URL.trim() === "" || ECPAY_URL.includes('stage')) {
+      if (!isActuallyTest) {
+        ECPAY_URL = "https://payment.ecpay.com.tw/Cashier/AioCheckOut/V5";
+        console.log(`[ECPay] Production Mode: ${ECPAY_URL}`);
+      } else {
+        ECPAY_URL = "https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5";
+        console.log(`[ECPay] Test Mode: ${ECPAY_URL}`);
+      }
+    }
+    
+    // Diagnostic logging
+    console.log(`[ECPay] Final MerchantID: "${finalMerchantID}"`);
+    console.log(`[ECPay] Env Keys Found:`, Object.keys(process.env).filter(k => k.includes('ECPAY')));
     
     // Robustness: If user accidentally pasted "ECPAY_URL=https://..." into the env var
     if (ECPAY_URL.includes('ECPAY_URL=')) {
@@ -99,17 +243,40 @@ async function startServer() {
       if (actualUrl) ECPAY_URL = actualUrl;
     }
 
+    // Ensure official casing for the endpoint
+    if (ECPAY_URL.toLowerCase().includes('aiocheckout')) {
+      ECPAY_URL = ECPAY_URL.replace(/aiocheckout/i, 'AioCheckOut');
+    }
+
     const isStage = ECPAY_URL.includes('stage');
     
-    const MERCHANT_ID = process.env.ECPAY_MERCHANT_ID || (isStage ? '2000132' : '');
     const HASH_KEY = process.env.ECPAY_HASH_KEY || (isStage ? '5294y06JbCWpE5vM' : '');
     const HASH_IV = process.env.ECPAY_HASH_IV || (isStage ? 'v77hoKGq4kWxJtE5' : '');
-    const APP_URL = (process.env.APP_URL || "").replace(/\/$/, "");
+
+    // Check for default stage keys in production
+    if (!isStage && (HASH_KEY === '5294y06JbCWpE5vM' || HASH_IV === 'v77hoKGq4kWxJtE5')) {
+      console.warn("[ECPay] WARNING: Using Stage HashKey/HashIV on a Production URL!");
+    }
+    
+    // Auto-detect APP_URL if not provided
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['host'];
+    const currentUrl = `${protocol}://${host}`;
+    const APP_URL = (process.env.APP_URL || currentUrl).replace(/\/$/, "");
+
+    console.log(`[ECPay] Environment: ${isStage ? 'STAGE' : 'PRODUCTION'}`);
+    console.log(`[ECPay] MerchantID: ${MERCHANT_ID}`);
+    console.log(`[ECPay] APP_URL (HOST): ${APP_URL}`);
 
     // Credential Mismatch Detection
     if (!isStage && MERCHANT_ID === '2000132') {
       console.error("[ECPay] Mismatch: Using Stage MerchantID on Production URL!");
       return res.status(400).json({ error: "環境設定錯誤：您正在使用正式環境網址，但 MerchantID 卻是測試用的 (2000132)。請在環境變數中填寫正確的正式金鑰。" });
+    }
+
+    if (isStage && MERCHANT_ID !== '2000132' && MERCHANT_ID.length === 7) {
+      // Production IDs are usually 7 digits, Stage is 2000132
+      console.warn("[ECPay] Warning: You might be using a Production MerchantID on a Stage URL.");
     }
 
     if (!MERCHANT_ID || !HASH_KEY || !HASH_IV || !APP_URL) {
@@ -143,11 +310,14 @@ async function startServer() {
 
       // Unique Trade No (max 20 chars)
       const MerchantTradeNo = `T${Date.now().toString().slice(-10)}${Math.floor(Math.random() * 1000)}`;
+      
+      // ECPay requires UTC+8 (Taiwan Time)
       const now = new Date();
-      const MerchantTradeDate = `${now.getFullYear()}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+      const taiwanTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+      const MerchantTradeDate = `${taiwanTime.getUTCFullYear()}/${(taiwanTime.getUTCMonth() + 1).toString().padStart(2, '0')}/${taiwanTime.getUTCDate().toString().padStart(2, '0')} ${taiwanTime.getUTCHours().toString().padStart(2, '0')}:${taiwanTime.getUTCMinutes().toString().padStart(2, '0')}:${taiwanTime.getUTCSeconds().toString().padStart(2, '0')}`;
 
       const baseParams: any = {
-        MerchantID: MERCHANT_ID,
+        MerchantID: finalMerchantID,
         MerchantTradeNo: MerchantTradeNo,
         MerchantTradeDate: MerchantTradeDate,
         PaymentType: 'aio',
@@ -199,12 +369,15 @@ async function startServer() {
     }
 
     if (data.RtnCode === '1') {
+      const firestoredb = getDb();
+      if (!firestoredb) return res.status(500).send("0|DBError");
+
       // Payment Success
       const userId = data.CustomField1;
       const durationMonths = parseInt(data.CustomField2);
 
       try {
-        const userRef = db.collection('users').doc(userId);
+        const userRef = firestoredb.collection('users').doc(userId);
         const userDoc = await userRef.get();
         
         if (userDoc.exists) {
@@ -221,6 +394,24 @@ async function startServer() {
           });
           
           console.log(`Successfully updated subscription for user ${userId} to ${newExpiry}`);
+
+          // Send Email Notification
+          const expiryString = newExpiry.toLocaleDateString('zh-TW', { 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+          });
+          
+          if (userData.email) {
+            try {
+              await sendNotificationEmail(userData.email, {
+                expiryDate: expiryString,
+                duration: durationMonths.toString()
+              });
+            } catch (emailError) {
+              console.error("[Email] Automatic notification failed:", emailError);
+            }
+          }
         }
       } catch (error) {
         console.error("Error updating user subscription:", error);
@@ -231,69 +422,74 @@ async function startServer() {
     res.send("1|OK");
   });
 
-  // Proxy route to bypass X-Frame-Options and CSP
-  app.get("/api/proxy", async (req, res) => {
-    const targetUrl = req.query.url as string;
-    if (!targetUrl) return res.status(400).send("URL is required");
+  // Proxy route - TERMINATED TO STOP COSTS
+  app.get("/api/proxy", (req, res) => {
+    res.status(410).json({ error: "Proxy service has been permanently disabled to control system costs." });
+  });
 
-    try {
-      const response = await axios.get(targetUrl, {
-        responseType: "text",
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        },
-        timeout: 10000,
-      });
+  // Routing logic
+  const isProd = process.env.K_SERVICE || process.env.NODE_ENV === "production";
+  const distPath = path.join(__dirname, "dist");
+  const distExists = fs.existsSync(distPath);
 
-      // Set headers to allow embedding
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      
-      let html = response.data;
-      
-      // Inject <base> tag to fix relative links (CSS, JS, Images)
-      try {
-        const urlObj = new URL(targetUrl);
-        const baseUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname.substring(0, urlObj.pathname.lastIndexOf('/') + 1)}`;
-        
-        // Find <head> and inject <base>
-        if (html.includes("<head>")) {
-          html = html.replace("<head>", `<head><base href="${baseUrl}">`);
-        } else if (html.includes("<HEAD>")) {
-          html = html.replace("<HEAD>", `<HEAD><base href="${baseUrl}">`);
-        } else {
-          html = `<base href="${baseUrl}">${html}`;
-        }
-      } catch (e) {
-        console.error("Base URL error:", e);
+  if (isProd || distExists) {
+    if (distExists) {
+      console.log(`[Server] Serving static files from: ${distPath}`);
+      app.use(express.static(distPath, {
+        maxAge: '1d',
+        etag: true,
+        index: ['index.html']
+      }));
+    } else {
+      console.warn("[Server] Production mode active but 'dist' directory is MISSING! Browsing will fail.");
+    }
+
+    app.get("*", (req, res) => {
+      // API routes check
+      if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: "API not found" });
       }
 
-      res.send(html);
-    } catch (error: any) {
-      console.error("Proxy error:", error.message);
-      res.status(500).send(`Error fetching URL: ${error.message}`);
-    }
-  });
+      // Static file check: If it has an extension and wasn't caught by express.static, it's missing.
+      if (req.path.includes('.') && !req.path.endsWith('.html')) {
+        return res.status(404).send('Not Found');
+      }
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
+      // Fallback for SPA routing
+      if (distExists) {
+        res.sendFile(path.join(distPath, "index.html"));
+      } else {
+        res.status(500).send("Application is not built yet. Please run 'npm run build' first.");
+      }
     });
-    app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
+    // Development mode with Vite
+    try {
+      console.log("[Server] Starting in DEVELOPMENT mode with Vite...");
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      
+      // Handle POST to frontend routes in dev to fix ECPay redirect issues
+      app.post("*", (req, res, next) => {
+        if (req.url.startsWith('/api')) return next();
+        res.redirect(req.url);
+      });
+    } catch (e) {
+      console.error("[Server] Vite initialization failed:", e);
+    }
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Optimize for Cloud Run: shorter keep-alive means instances can shutdown sooner
+  server.keepAliveTimeout = 5000; 
+  server.headersTimeout = 6000;
 }
 
 startServer();
